@@ -47,12 +47,12 @@ func main() {
 				Flags: sharedFlags(),
 				Action: func(c *cli.Context) error {
 					baseDir := resolveBaseDir(c.String("dir"))
-					repos, err := resolveRepos(baseDir, c.String("repos"))
+					repos, skipped, err := resolveRepos(baseDir, c.String("repos"), c.String("exclude"))
 					if err != nil {
 						return err
 					}
 					results := runParallel(repos, opPull)
-					printResults("Pull", results)
+					printResults("Pull", results, skipped)
 					return nil
 				},
 			},
@@ -62,12 +62,12 @@ func main() {
 				Flags: sharedFlags(),
 				Action: func(c *cli.Context) error {
 					baseDir := resolveBaseDir(c.String("dir"))
-					repos, err := resolveRepos(baseDir, c.String("repos"))
+					repos, skipped, err := resolveRepos(baseDir, c.String("repos"), c.String("exclude"))
 					if err != nil {
 						return err
 					}
 					results := runParallel(repos, opSync)
-					printResults("Sync", results)
+					printResults("Sync", results, skipped)
 					return nil
 				},
 			},
@@ -77,12 +77,12 @@ func main() {
 				Flags: sharedFlags(),
 				Action: func(c *cli.Context) error {
 					baseDir := resolveBaseDir(c.String("dir"))
-					repos, err := resolveRepos(baseDir, c.String("repos"))
+					repos, skipped, err := resolveRepos(baseDir, c.String("repos"), c.String("exclude"))
 					if err != nil {
 						return err
 					}
 					results := runParallel(repos, opReset)
-					printResults("Reset", results)
+					printResults("Reset", results, skipped)
 					return nil
 				},
 			},
@@ -97,12 +97,12 @@ func main() {
 				}),
 				Action: func(c *cli.Context) error {
 					baseDir := resolveBaseDir(c.String("dir"))
-					repos, err := resolveRepos(baseDir, c.String("repos"))
+					repos, skipped, err := resolveRepos(baseDir, c.String("repos"), c.String("exclude"))
 					if err != nil {
 						return err
 					}
 					results := runParallel(repos, opCreateBranch(c.String("name")))
-					printResults("Branch", results)
+					printResults("Branch", results, skipped)
 					return nil
 				},
 			},
@@ -117,12 +117,12 @@ func main() {
 				}),
 				Action: func(c *cli.Context) error {
 					baseDir := resolveBaseDir(c.String("dir"))
-					repos, err := resolveRepos(baseDir, c.String("repos"))
+					repos, skipped, err := resolveRepos(baseDir, c.String("repos"), c.String("exclude"))
 					if err != nil {
 						return err
 					}
 					results := runParallel(repos, opPush(c.String("message")))
-					printResults("Push", results)
+					printResults("Push", results, skipped)
 					return nil
 				},
 			},
@@ -137,12 +137,12 @@ func main() {
 				}),
 				Action: func(c *cli.Context) error {
 					baseDir := resolveBaseDir(c.String("dir"))
-					repos, err := resolveRepos(baseDir, c.String("repos"))
+					repos, skipped, err := resolveRepos(baseDir, c.String("repos"), c.String("exclude"))
 					if err != nil {
 						return err
 					}
 					results := runParallel(repos, opCheckout(c.String("name")))
-					printResults("Checkout", results)
+					printResults("Checkout", results, skipped)
 					return nil
 				},
 			},
@@ -152,12 +152,12 @@ func main() {
 				Flags: sharedFlags(),
 				Action: func(c *cli.Context) error {
 					baseDir := resolveBaseDir(c.String("dir"))
-					repos, err := resolveRepos(baseDir, c.String("repos"))
+					repos, skipped, err := resolveRepos(baseDir, c.String("repos"), c.String("exclude"))
 					if err != nil {
 						return err
 					}
 					results := runParallel(repos, opStatus)
-					printResults("Status", results)
+					printResults("Status", results, skipped)
 					return nil
 				},
 			},
@@ -172,6 +172,11 @@ func main() {
 
 func sharedFlags() []cli.Flag {
 	return []cli.Flag{
+		&cli.StringFlag{
+			Name:    "exclude",
+			Aliases: []string{"x"},
+			Usage:   "Comma-separated list of repos to exclude",
+		},
 		&cli.StringFlag{
 			Name:    "repos",
 			Aliases: []string{"r"},
@@ -201,10 +206,21 @@ func resolveBaseDir(dir string) string {
 	return cwd
 }
 
-func resolveRepos(baseDir, repoFlag string) ([]string, error) {
+func resolveRepos(baseDir, repoFlag, excludeFlag string) ([]string, int, error) {
+	excludeSet := make(map[string]bool)
+	if excludeFlag != "" {
+		for _, name := range strings.Split(excludeFlag, ",") {
+			name = strings.TrimSpace(name)
+			if name != "" {
+				excludeSet[name] = true
+			}
+		}
+	}
+
+	var repos []string
 	if repoFlag != "" {
 		names := strings.Split(repoFlag, ",")
-		repos := make([]string, 0, len(names))
+		repos = make([]string, 0, len(names))
 		for _, name := range names {
 			name = strings.TrimSpace(name)
 			if name == "" {
@@ -212,11 +228,30 @@ func resolveRepos(baseDir, repoFlag string) ([]string, error) {
 			}
 			repoPath := filepath.Join(baseDir, name)
 			if _, err := os.Stat(filepath.Join(repoPath, ".git")); err != nil {
-				return nil, fmt.Errorf("%s is not a git repository", name)
+				return nil, 0, fmt.Errorf("%s is not a git repository", name)
 			}
 			repos = append(repos, repoPath)
 		}
-		return repos, nil
+	} else {
+		var err error
+		repos, err = discoverRepos(baseDir)
+		if err != nil {
+			return nil, 0, err
+		}
 	}
-	return discoverRepos(baseDir)
+
+	skipped := 0
+	if len(excludeSet) > 0 {
+		before := len(repos)
+		filtered := repos[:0]
+		for _, r := range repos {
+			if !excludeSet[filepath.Base(r)] {
+				filtered = append(filtered, r)
+			}
+		}
+		repos = filtered
+		skipped = before - len(repos)
+	}
+
+	return repos, skipped, nil
 }

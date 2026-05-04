@@ -13,6 +13,7 @@ import (
 // Result holds the outcome of a git operation on a single repo.
 type Result struct {
 	Repo    string
+	Skipped bool
 	Success bool
 	Output  string
 	Error   string
@@ -245,7 +246,7 @@ func runParallel(repos []string, op func(string) Result) []Result {
 	return results
 }
 
-func printResults(title string, results []Result) {
+func printResults(title string, results []Result, skipped int) {
 	fmt.Printf("\n  %s Results\n", title)
 	fmt.Printf("  %s\n", strings.Repeat("-", 58))
 
@@ -261,6 +262,6 @@ func printResults(title string, results []Result) {
 	}
 
 	fmt.Printf("  %s\n", strings.Repeat("-", 58))
-	fmt.Printf("  Total: %d  \033[32mSuccess: %d\033[0m  \033[31mFailed: %d\033[0m\n\n",
-		len(results), successes, failures)
+	fmt.Printf("  Total: %d  \033[32mSuccess: %d\033[0m  \033[31mFailed: %d\033[0m  Skipped: %d\n\n",
+		len(results), successes, failures, skipped)
 }
