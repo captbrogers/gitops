@@ -119,20 +119,52 @@ func runGit(repoPath string, args ...string) (string, error) {
 	return output, nil
 }
 
+// getCurrentBranch returns the currently checked-out branch name.
+func getCurrentBranch(repoPath string) (string, error) {
+	out, err := runGit(repoPath, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
 func opPull(repoPath string) Result {
 	repo := filepath.Base(repoPath)
-	branch := getDefaultBranch(repoPath)
+	defaultBranch := getDefaultBranch(repoPath)
 
-	if _, err := runGit(repoPath, "checkout", branch); err != nil {
-		return Result{Repo: repo, Error: fmt.Sprintf("checkout %s: %v", branch, err)}
+	// Remember the current branch so we can switch back
+	originalBranch, err := getCurrentBranch(repoPath)
+	if err != nil {
+		return Result{Repo: repo, Error: fmt.Sprintf("get current branch: %v", err)}
 	}
+
+	needSwitch := originalBranch != defaultBranch
+
+	if needSwitch {
+		if _, err := runGit(repoPath, "checkout", defaultBranch); err != nil {
+			return Result{Repo: repo, Error: fmt.Sprintf("checkout %s: %v", defaultBranch, err)}
+		}
+	}
+
 	out, err := runGit(repoPath, "pull", "--ff-only")
 	if err != nil {
+		// Attempt to switch back even on pull failure
+		if needSwitch {
+			runGit(repoPath, "checkout", originalBranch)
+		}
 		return Result{Repo: repo, Error: fmt.Sprintf("pull: %v", err)}
 	}
 	if out == "" {
 		out = "Already up to date."
 	}
+
+	// Switch back to the original branch
+	if needSwitch {
+		if _, err := runGit(repoPath, "checkout", originalBranch); err != nil {
+			return Result{Repo: repo, Success: true, Output: out + fmt.Sprintf(" (warning: could not switch back to %s: %v)", originalBranch, err)}
+		}
+	}
+
 	return Result{Repo: repo, Success: true, Output: out}
 }
 
