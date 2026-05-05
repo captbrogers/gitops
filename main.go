@@ -26,10 +26,21 @@ func main() {
 				Aliases: []string{"d"},
 				Usage:   "Base directory containing repos (default: current directory)",
 			},
+			&cli.BoolFlag{
+				Name:    "recursive",
+				Aliases: []string{"R"},
+				Usage:   "Recurse one level into subdirectories to find repos",
+			},
 		},
 		Action: func(c *cli.Context) error {
 			baseDir := resolveBaseDir(c.String("dir"))
-			repos, err := discoverRepos(baseDir)
+			var repos []string
+			var err error
+			if c.Bool("recursive") {
+				repos, err = discoverReposRecursive(baseDir)
+			} else {
+				repos, err = discoverRepos(baseDir)
+			}
 			if err != nil {
 				return fmt.Errorf("failed to discover repos: %w", err)
 			}
@@ -47,11 +58,12 @@ func main() {
 				Flags: sharedFlags(),
 				Action: func(c *cli.Context) error {
 					baseDir := resolveBaseDir(c.String("dir"))
-					repos, skipped, err := resolveRepos(baseDir, c.String("repos"), c.String("exclude"))
+					repos, skipped, err := resolveRepos(baseDir, c.String("repos"), c.String("exclude"), c.Bool("recursive"))
 					if err != nil {
 						return err
 					}
 					results := runParallel(repos, opPull)
+					annotateGroups(baseDir, repos, results)
 					printResults("Pull", results, skipped)
 					return nil
 				},
@@ -62,11 +74,12 @@ func main() {
 				Flags: sharedFlags(),
 				Action: func(c *cli.Context) error {
 					baseDir := resolveBaseDir(c.String("dir"))
-					repos, skipped, err := resolveRepos(baseDir, c.String("repos"), c.String("exclude"))
+					repos, skipped, err := resolveRepos(baseDir, c.String("repos"), c.String("exclude"), c.Bool("recursive"))
 					if err != nil {
 						return err
 					}
 					results := runParallel(repos, opSync)
+					annotateGroups(baseDir, repos, results)
 					printResults("Sync", results, skipped)
 					return nil
 				},
@@ -77,11 +90,12 @@ func main() {
 				Flags: sharedFlags(),
 				Action: func(c *cli.Context) error {
 					baseDir := resolveBaseDir(c.String("dir"))
-					repos, skipped, err := resolveRepos(baseDir, c.String("repos"), c.String("exclude"))
+					repos, skipped, err := resolveRepos(baseDir, c.String("repos"), c.String("exclude"), c.Bool("recursive"))
 					if err != nil {
 						return err
 					}
 					results := runParallel(repos, opReset)
+					annotateGroups(baseDir, repos, results)
 					printResults("Reset", results, skipped)
 					return nil
 				},
@@ -97,11 +111,12 @@ func main() {
 				}),
 				Action: func(c *cli.Context) error {
 					baseDir := resolveBaseDir(c.String("dir"))
-					repos, skipped, err := resolveRepos(baseDir, c.String("repos"), c.String("exclude"))
+					repos, skipped, err := resolveRepos(baseDir, c.String("repos"), c.String("exclude"), c.Bool("recursive"))
 					if err != nil {
 						return err
 					}
 					results := runParallel(repos, opCreateBranch(c.String("name")))
+					annotateGroups(baseDir, repos, results)
 					printResults("Branch", results, skipped)
 					return nil
 				},
@@ -117,11 +132,12 @@ func main() {
 				}),
 				Action: func(c *cli.Context) error {
 					baseDir := resolveBaseDir(c.String("dir"))
-					repos, skipped, err := resolveRepos(baseDir, c.String("repos"), c.String("exclude"))
+					repos, skipped, err := resolveRepos(baseDir, c.String("repos"), c.String("exclude"), c.Bool("recursive"))
 					if err != nil {
 						return err
 					}
 					results := runParallel(repos, opPush(c.String("message")))
+					annotateGroups(baseDir, repos, results)
 					printResults("Push", results, skipped)
 					return nil
 				},
@@ -137,11 +153,12 @@ func main() {
 				}),
 				Action: func(c *cli.Context) error {
 					baseDir := resolveBaseDir(c.String("dir"))
-					repos, skipped, err := resolveRepos(baseDir, c.String("repos"), c.String("exclude"))
+					repos, skipped, err := resolveRepos(baseDir, c.String("repos"), c.String("exclude"), c.Bool("recursive"))
 					if err != nil {
 						return err
 					}
 					results := runParallel(repos, opCheckout(c.String("name")))
+					annotateGroups(baseDir, repos, results)
 					printResults("Checkout", results, skipped)
 					return nil
 				},
@@ -152,11 +169,12 @@ func main() {
 				Flags: sharedFlags(),
 				Action: func(c *cli.Context) error {
 					baseDir := resolveBaseDir(c.String("dir"))
-					repos, skipped, err := resolveRepos(baseDir, c.String("repos"), c.String("exclude"))
+					repos, skipped, err := resolveRepos(baseDir, c.String("repos"), c.String("exclude"), c.Bool("recursive"))
 					if err != nil {
 						return err
 					}
 					results := runParallel(repos, opStatus)
+					annotateGroups(baseDir, repos, results)
 					printResults("Status", results, skipped)
 					return nil
 				},
@@ -187,6 +205,11 @@ func sharedFlags() []cli.Flag {
 			Aliases: []string{"d"},
 			Usage:   "Base directory containing repos (default: cwd)",
 		},
+		&cli.BoolFlag{
+			Name:    "recursive",
+			Aliases: []string{"R"},
+			Usage:   "Recurse one level into subdirectories to find repos",
+		},
 	}
 }
 
@@ -206,7 +229,7 @@ func resolveBaseDir(dir string) string {
 	return cwd
 }
 
-func resolveRepos(baseDir, repoFlag, excludeFlag string) ([]string, int, error) {
+func resolveRepos(baseDir, repoFlag, excludeFlag string, recursive bool) ([]string, int, error) {
 	excludeSet := make(map[string]bool)
 	if excludeFlag != "" {
 		for _, name := range strings.Split(excludeFlag, ",") {
@@ -234,7 +257,11 @@ func resolveRepos(baseDir, repoFlag, excludeFlag string) ([]string, int, error) 
 		}
 	} else {
 		var err error
-		repos, err = discoverRepos(baseDir)
+		if recursive {
+			repos, err = discoverReposRecursive(baseDir)
+		} else {
+			repos, err = discoverRepos(baseDir)
+		}
 		if err != nil {
 			return nil, 0, err
 		}
